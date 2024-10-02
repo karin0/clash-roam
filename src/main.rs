@@ -12,19 +12,24 @@ use app::App;
 
 mod app;
 
-fn parse_addr(am: &Address, if_name: &str, only_prefix: bool) -> Option<Ipv4Addr> {
+fn parse_addr(am: &Address, if_name: &str, only_prefix: bool) -> Option<(String, Ipv4Addr)> {
+    let label = am.label();
     if if only_prefix {
-        am.label().starts_with(if_name)
+        label.starts_with(if_name)
     } else {
-        am.label() == if_name
+        label == if_name
     } {
-        Some(*am.addr())
+        Some((label.to_string(), *am.addr()))
     } else {
         None
     }
 }
 
-async fn find_addr(addresses: Addresses, if_name: &str, only_prefix: bool) -> Option<Ipv4Addr> {
+async fn find_addr(
+    addresses: Addresses,
+    if_name: &str,
+    only_prefix: bool,
+) -> Option<(String, Ipv4Addr)> {
     let mut addrs = pin!(addresses.stream());
     while let Some(am) = addrs.next().await {
         let r = parse_addr(&am, if_name, only_prefix);
@@ -46,11 +51,11 @@ async fn main() -> io::Result<()> {
     pretty_env_logger::init_timed();
 
     let app = App::new();
-    let mut if_name = app.if_name.as_str();
+    let mut if_pattern = app.if_name.as_str();
 
-    let only_prefix = if_name.ends_with('*');
+    let only_prefix = if_pattern.ends_with('*');
     if only_prefix {
-        if_name = &if_name[..if_name.len() - 1];
+        if_pattern = &if_pattern[..if_pattern.len() - 1];
     }
 
     let c = Connection::new()?;
@@ -58,18 +63,18 @@ async fn main() -> io::Result<()> {
     let h = c.handle;
     tokio::spawn(c.conn);
 
-    if let Some(addr) = find_addr(h.addresses, if_name, only_prefix).await {
+    if let Some((if_name, addr)) = find_addr(h.addresses, if_pattern, only_prefix).await {
         info!("{}: {}", if_name, addr);
         app.initialize(addr).await;
     } else {
-        info!("{}: no address", if_name);
+        info!("{}: no address", if_pattern);
         app.initialize(Ipv4Addr::UNSPECIFIED).await;
     }
 
     let mut msgs = pin!(h.monitor.stream());
     while let Some(msg) = msgs.next().await {
         let am = msg.addr();
-        if let Some(addr) = parse_addr(am, if_name, only_prefix) {
+        if let Some((if_name, addr)) = parse_addr(am, if_pattern, only_prefix) {
             let enter = msg.is_new();
             if enter {
                 info!("new: {}: {}", if_name, addr);
