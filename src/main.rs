@@ -12,18 +12,22 @@ use app::App;
 
 mod app;
 
-fn parse_addr(am: &Address, if_name: &str) -> Option<Ipv4Addr> {
-    if am.label() == if_name {
+fn parse_addr(am: &Address, if_name: &str, only_prefix: bool) -> Option<Ipv4Addr> {
+    if if only_prefix {
+        am.label().starts_with(if_name)
+    } else {
+        am.label() == if_name
+    } {
         Some(*am.addr())
     } else {
         None
     }
 }
 
-async fn find_addr(addresses: Addresses, if_name: &str) -> Option<Ipv4Addr> {
+async fn find_addr(addresses: Addresses, if_name: &str, only_prefix: bool) -> Option<Ipv4Addr> {
     let mut addrs = pin!(addresses.stream());
     while let Some(am) = addrs.next().await {
-        let r = parse_addr(&am, if_name);
+        let r = parse_addr(&am, if_name, only_prefix);
         if r.is_some() {
             return r;
         }
@@ -42,13 +46,19 @@ async fn main() -> io::Result<()> {
     pretty_env_logger::init_timed();
 
     let app = App::new();
-    let if_name = &app.if_name;
+    let mut if_name = app.if_name.as_str();
+
+    let only_prefix = if_name.ends_with('*');
+    if only_prefix {
+        if_name = &if_name[..if_name.len() - 1];
+    }
 
     let c = Connection::new()?;
+
     let h = c.handle;
     tokio::spawn(c.conn);
 
-    if let Some(addr) = find_addr(h.addresses, if_name).await {
+    if let Some(addr) = find_addr(h.addresses, if_name, only_prefix).await {
         info!("{}: {}", if_name, addr);
         app.initialize(addr).await;
     } else {
@@ -59,7 +69,7 @@ async fn main() -> io::Result<()> {
     let mut msgs = pin!(h.monitor.stream());
     while let Some(msg) = msgs.next().await {
         let am = msg.addr();
-        if let Some(addr) = parse_addr(am, if_name) {
+        if let Some(addr) = parse_addr(am, if_name, only_prefix) {
             let enter = msg.is_new();
             if enter {
                 info!("new: {}: {}", if_name, addr);
